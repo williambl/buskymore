@@ -15,8 +15,6 @@ import java.util.concurrent.ExecutorService;
 
 public class DiscordPostSender {
     private final JDA jda;
-    private final Config config;
-    private final ExecutorService executor;
     private final Map<BskyPostGetter, List<String>> postGetters = new HashMap<>();
 
     public record Config(String token, List<Mapping> mappings) {
@@ -26,8 +24,6 @@ public class DiscordPostSender {
     public DiscordPostSender(Config config, ExecutorService executor) {
         this.jda = JDABuilder.createLight(config.token())
                 .build();
-        this.config = config;
-        this.executor = executor;
         for (var mapping : config.mappings) {
             this.postGetters.put(new BskyPostGetter(mapping.getterConfig(), executor), mapping.channelIds());
         }
