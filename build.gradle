@@ -24,6 +24,18 @@ test {
     useJUnitPlatform()
 }
 
+tasks.register('copyJarToStaticName', Copy) {
+    from jar
+    into layout.buildDirectory.dir('static')
+    with {
+        rename { String filename ->
+            filename.replace("-$project.version", "")
+        }
+    }
+}
+
+assemble.finalizedBy(copyJarToStaticName)
+
 publishing {
     publications {
         mavenJava(MavenPublication) {
