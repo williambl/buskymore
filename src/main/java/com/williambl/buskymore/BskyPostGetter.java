@@ -2,6 +2,8 @@ package com.williambl.buskymore;
 
 import com.github.mizosoft.methanol.MoreBodyHandlers;
 import com.google.gson.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.URI;
@@ -23,7 +25,7 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 public class BskyPostGetter {
-
+    public static final Logger LOGGER = LoggerFactory.getLogger(BskyPostGetter.class);
     private static final Set<String> NOT_EMBEDS = Set.of("app.bsky.embed.external", "app.bsky.embed.record");
 
     public record Config(String userAgent, int backlogDays, int maxBacklogPosts, String statePath, List<PostSource> postSources) {
@@ -135,7 +137,7 @@ public class BskyPostGetter {
                 .headers(this.makeHeaders())
                 .GET()
                 .build();
-        var bodyHandler = this.jsonBodyHandler();
+        var bodyHandler = this.jsonBodyHandler(uri);
         return this.httpClient.sendAsync(request, bodyHandler)
                 .thenApply(HttpResponse::body)
                 .thenApply(j -> this.parseFeed(j, p -> p.createdAt().isAfter(latest)));
@@ -148,7 +150,7 @@ public class BskyPostGetter {
                 .headers(this.makeHeaders())
                 .GET()
                 .build();
-        var bodyHandler = this.jsonBodyHandler();
+        var bodyHandler = this.jsonBodyHandler(uri);
         return this.httpClient.sendAsync(request, bodyHandler)
                 .thenApply(HttpResponse::body)
                 .thenApply(j -> this.parseFeed(j, p -> p.createdAt().isAfter(latest)
@@ -156,27 +158,26 @@ public class BskyPostGetter {
                 && (user.includeNoEmbed() || p.hasEmbeds())));
     }
 
-    private HttpResponse.BodyHandler<Optional<JsonElement>> jsonBodyHandler() {
+    private HttpResponse.BodyHandler<Optional<JsonElement>> jsonBodyHandler(URI uri) {
         return MoreBodyHandlers.decoding(responseInfo -> {
             HttpResponse.BodySubscriber<String> string = HttpResponse.BodyHandlers.ofString().apply(responseInfo);
             if (responseInfo.statusCode() / 100 != 2) {
                 return HttpResponse.BodySubscribers.mapping(
                         string,
                         str -> {
-                            //this.logger.debug("From: {}, received non-OK status code: {}\nWith body: {}", uri, responseInfo.statusCode(), str);
+                            LOGGER.debug("From: {}, received non-OK status code: {}\nWith body: {}", uri, responseInfo.statusCode(), str);
                             return Optional.empty();//DataResult.error(() -> "Received non-OK status code %s (with body %s)".formatted(responseInfo.statusCode(), str));
                         });
             }
-
-            System.out.println(string);
 
             return HttpResponse.BodySubscribers.mapping(
                     string,
                     s -> {
                         try {
-                            System.out.printf("received %s%n", s);
+                            LOGGER.debug("From: {}, received {}", uri, s);
                             return Optional.of(JsonParser.parseString(s));
                         } catch (JsonParseException e) {
+                            LOGGER.error("From: {}, received invalid JSON {}: ", uri, s, e);
                             return Optional.empty();
                         }
                     });
@@ -220,7 +221,7 @@ public class BskyPostGetter {
                         }
                         return new Post(new URI(uri), createdAt, Optional.ofNullable(reason), record.has("embed") && !(NOT_EMBEDS.contains(record.getAsJsonObject("embed").get("$type").getAsString())));
                     } catch (URISyntaxException | JsonParseException e) {
-                        // ignore
+                        LOGGER.error("Can't parse a post, ignoring it: {}", j, e);
                         return null;
                     }
                 })
