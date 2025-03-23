@@ -19,7 +19,6 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
@@ -27,7 +26,7 @@ public class BskyPostGetter {
 
     private static final Set<String> NOT_EMBEDS = Set.of("app.bsky.embed.external", "app.bsky.embed.record");
 
-    public record Config(String userAgent, Path state, List<PostSource> postSources) {
+    public record Config(String userAgent, int backlogDays, int maxBacklogPosts, String statePath, List<PostSource> postSources) {
 
         sealed interface PostSource {
             record User(String userDid, boolean includeRetweets, boolean includeNoEmbed) implements PostSource {
@@ -54,21 +53,23 @@ public class BskyPostGetter {
     private final HttpClient httpClient;
     private final ExecutorService executor;
     private final Config config;
+    private final Path statePath;
 
-    public BskyPostGetter(Config config) {
+    public BskyPostGetter(Config config, ExecutorService executor) {
         this.config = config;
-        this.executor = Executors.newVirtualThreadPerTaskExecutor();
+        this.executor = executor;
         this.httpClient = HttpClient.newBuilder()
                 .executor(this.executor)
                 .build();
+        this.statePath = Path.of(this.config.statePath);
     }
 
     public State readState() throws IOException {
-        if (!Files.exists(this.config.state)) {
+        if (!Files.exists(this.statePath)) {
             return new State(Map.of());
         }
 
-        return new State(Arrays.stream(Files.readString(this.config.state).split("\n"))
+        return new State(Arrays.stream(Files.readString(this.statePath).split("\n"))
                 .map(line -> {
                     var kv = line.split("\t");
                     if (kv.length == 2) {
@@ -82,7 +83,7 @@ public class BskyPostGetter {
     }
 
     public void writeState(State state) throws IOException {
-        try (var writer = Files.newBufferedWriter(this.config.state(), StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+        try (var writer = Files.newBufferedWriter(this.statePath, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
             for (var entry : state.latestPostTimestamps().entrySet()) {
                 writer.write(entry.getKey());
                 writer.write("\t");
@@ -97,7 +98,7 @@ public class BskyPostGetter {
             List<CompletableFuture<List<Post>>> postFutures = new ArrayList<>();
             List<Config.PostSource> postSources = this.config.postSources;
             for (var postSource : postSources) {
-                Instant latestPostTimestamp = state.latestPostTimestamps().getOrDefault(postSource.uniqueKey(), Instant.now().minus(1, ChronoUnit.HALF_DAYS));
+                Instant latestPostTimestamp = state.latestPostTimestamps().getOrDefault(postSource.uniqueKey(), Instant.now().minus(this.config.backlogDays(), ChronoUnit.DAYS));
                 postFutures.add(switch (postSource) {
                     case Config.PostSource.Feed feed -> this.getPosts(feed, latestPostTimestamp);
                     case Config.PostSource.User user -> this.getPosts(user, latestPostTimestamp);
@@ -109,11 +110,14 @@ public class BskyPostGetter {
                 var source = postSources.get(i);
                 var future = postFutures.get(i);
                 Instant latest = Instant.MIN;
+                int postCount = 0;
                 for (var post : future.join()) {
                     if (post.createdAt().isAfter(latest)) {
                         latest = post.createdAt();
                     }
-                    posts.add(post);
+                    if (postCount++ < this.config.maxBacklogPosts()) {
+                        posts.add(post);
+                    }
                 }
                 Instant finalLatest = latest;
                 latestPostTimestamps.compute(source.uniqueKey(), (k, oldLatest) -> oldLatest == null || oldLatest.isBefore(finalLatest) ? finalLatest : oldLatest);
