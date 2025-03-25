@@ -99,7 +99,11 @@ public class BskyPostGetter {
         return CompletableFuture.supplyAsync(() -> {
             List<CompletableFuture<List<Post>>> postFutures = new ArrayList<>();
             List<Config.PostSource> postSources = this.config.postSources;
+            Set<Config.PostSource> newSources = new HashSet<>();
             for (var postSource : postSources) {
+                if (!state.latestPostTimestamps.containsKey(postSource.uniqueKey())) {
+                    newSources.add(postSource);
+                }
                 Instant latestPostTimestamp = state.latestPostTimestamps().getOrDefault(postSource.uniqueKey(), Instant.now().minus(this.config.backlogDays(), ChronoUnit.DAYS));
                 postFutures.add(switch (postSource) {
                     case Config.PostSource.Feed feed -> this.getPosts(feed, latestPostTimestamp);
@@ -112,14 +116,15 @@ public class BskyPostGetter {
                 var source = postSources.get(i);
                 var future = postFutures.get(i);
                 Instant latest = Instant.MIN;
-                int postCount = 0;
+                int backlogPostCount = 0;
                 for (var post : future.join()) {
                     if (post.createdAt().isAfter(latest)) {
                         latest = post.createdAt();
                     }
-                    if (postCount++ < this.config.maxBacklogPosts()) {
-                        posts.add(post);
+                    if (newSources.contains(source) && backlogPostCount++ < this.config.maxBacklogPosts()) {
+                        continue;
                     }
+                    posts.add(post);
                 }
                 Instant finalLatest = latest;
                 latestPostTimestamps.compute(source.uniqueKey(), (k, oldLatest) -> oldLatest == null || oldLatest.isBefore(finalLatest) ? finalLatest : oldLatest);
