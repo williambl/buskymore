@@ -21,6 +21,10 @@ public class Main {
         var config = gson.fromJson(configString, DiscordPostSender.Config.class);
         var sender = new DiscordPostSender(config, Executors.newVirtualThreadPerTaskExecutor());
         sender.run()
+                .exceptionally(e -> {
+                    sender.fail(e);
+                    return null;
+                })
                 .thenRun(sender::stop)
                 .join();
     }

@@ -33,7 +33,6 @@ public class DiscordPostSender {
     public record Config(String token, String botOwnerUri, String botVersion, List<Mapping> mappings) {
         public record Mapping(String name, BskyPostGetter.Config getterConfig, List<String> channelIds) {}
     }
-
     public DiscordPostSender(Config config, ExecutorService executor) {
         this.rateLimitedExecutor = new RateLimitedExecutor(40, Duration.ofSeconds(1), executor);
         this.httpClient = HttpClient.newBuilder()
@@ -163,6 +162,10 @@ public class DiscordPostSender {
         }
 
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+    }
+
+    public void fail(Throwable throwable) {
+        LOGGER.error("Error", throwable);
     }
 
     public void stop() {
