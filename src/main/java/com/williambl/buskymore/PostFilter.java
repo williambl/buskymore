@@ -24,7 +24,6 @@ public interface PostFilter extends Predicate<Post> {
             @Override
             public String toString() {
                 StringBuilder res = new StringBuilder();
-                res.append('"');
                 this.value.codePoints().forEachOrdered(codepoint -> {
                     if (codepoint == '\"') {
                         res.append("\"");
@@ -46,7 +45,6 @@ public interface PostFilter extends Predicate<Post> {
                         res.appendCodePoint(codepoint);
                     }
                 });
-                res.append('"');
                 return res.toString();
             }
         }
@@ -62,33 +60,30 @@ public interface PostFilter extends Predicate<Post> {
             @Override
             public String toString() {
                 if (this.values.isEmpty()) {
-                    return "[]";
+                    return "()";
                 }
 
                 if (this.values.size() == 1) {
-                    return "[" + this.values.getFirst().toString() + "]";
+                    return "(" + this.values.getFirst().toString() + ")";
                 }
 
                 StringBuilder result = new StringBuilder();
                 boolean shouldUseNewlines = false;
                 int[] whitespaces = new int[this.values.size() + 1];
-                result.append("[ ");
+                result.append("( ");
                 whitespaces[0] = result.length() - 1;
                 List<Fisp> fisps = this.values;
                 for (int i = 0; i < fisps.size(); i++) {
                     var value = fisps.get(i);
                     String valueAsString = value.toString();
                     result.append(valueAsString);
-                    if (i < fisps.size() - 1) {
-                        result.append(',');
-                    }
                     result.append(' ');
                     whitespaces[i + 1] = result.length() - 1;
                     if (valueAsString.contains("\n")) {
                         shouldUseNewlines = true;
                     }
                 }
-                result.append("]");
+                result.append(")");
                 if (result.length() > 80) {
                     shouldUseNewlines = true;
                 }
