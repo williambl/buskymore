@@ -14,6 +14,10 @@ public interface PostFilter extends Predicate<Post> {
 
     // fisp (filter lisp)
     sealed interface Fisp {
+        static Fisp parse(String value) {
+            return new Str("unimplemented"); //todo
+        }
+
         record Bool(boolean value) implements Fisp {
             @Override
             public String toString() {
