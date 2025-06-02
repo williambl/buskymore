@@ -31,13 +31,13 @@ public class BskyPostGetter {
     public record Config(String userAgent, int backlogDays, int maxBacklogPosts, String statePath, List<PostSource> postSources) {
 
         sealed interface PostSource {
-            record User(String userDid, boolean includeRetweets, boolean includeNoEmbed) implements PostSource {
+            record User(String userDid, PostFilter.Fisp filter) implements PostSource {
                 @Override
                 public String uniqueKey() {
                     return this.userDid;
                 }
             }
-            record Feed(String userDid, String feedKey) implements PostSource {
+            record Feed(String userDid, String feedKey, PostFilter.Fisp filter) implements PostSource {
                 @Override
                 public String uniqueKey() {
                     return "%s/app.bsky.feed.generator/%s".formatted(this.userDid, this.feedKey);
@@ -135,6 +135,7 @@ public class BskyPostGetter {
     }
 
     private CompletableFuture<List<Post>> getPosts(Config.PostSource.Feed feed, Instant latest) {
+        var filter = PostFilter.PARSER.parse(feed.filter());
         String atUri = "at://%s/app.bsky.feed.generator/%s".formatted(feed.userDid(), feed.feedKey());
         String queryString = "?feed=%s".formatted(URLEncoder.encode(atUri, StandardCharsets.UTF_8));
         URI uri = URI.create("https://public.api.bsky.app/xrpc/app.bsky.feed.getFeed"+queryString);
@@ -145,10 +146,11 @@ public class BskyPostGetter {
         var bodyHandler = this.jsonBodyHandler(uri);
         return this.httpClient.sendAsync(request, bodyHandler)
                 .thenApply(HttpResponse::body)
-                .thenApply(j -> this.parseFeed(j, p -> p.createdAt().isAfter(latest)));
+                .thenApply(j -> this.parseFeed(j, p -> p.createdAt().isAfter(latest) && filter.test(p)));
     }
 
     private CompletableFuture<List<Post>> getPosts(Config.PostSource.User user, Instant latest) {
+        var filter = PostFilter.PARSER.parse(user.filter());
         String queryString = "?actor=%s".formatted(URLEncoder.encode(user.userDid(), StandardCharsets.UTF_8));
         URI uri = URI.create("https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed"+queryString);
         var request = HttpRequest.newBuilder(uri)
@@ -158,9 +160,7 @@ public class BskyPostGetter {
         var bodyHandler = this.jsonBodyHandler(uri);
         return this.httpClient.sendAsync(request, bodyHandler)
                 .thenApply(HttpResponse::body)
-                .thenApply(j -> this.parseFeed(j, p -> p.createdAt().isAfter(latest)
-                        && (user.includeRetweets() || p.reason().filter("app.bsky.feed.defs#reasonRepost"::equals).isEmpty())
-                && (user.includeNoEmbed() || p.hasEmbeds())));
+                .thenApply(j -> this.parseFeed(j, p -> p.createdAt().isAfter(latest) && filter.test(p)));
     }
 
     private HttpResponse.BodyHandler<Optional<JsonElement>> jsonBodyHandler(URI uri) {
@@ -217,6 +217,7 @@ public class BskyPostGetter {
                         var post = j.getAsJsonObject("post");
                         var record = post.getAsJsonObject("record");
                         var createdAt = Instant.parse(record.get("createdAt").getAsString());
+                        var text = record.getAsJsonPrimitive("text").getAsString();
                         var uri = post.get("uri").getAsString();
                         String reason;
                         if (j.has("reason")) {
@@ -224,7 +225,7 @@ public class BskyPostGetter {
                         } else {
                             reason = null;
                         }
-                        return new Post(new URI(uri), createdAt, Optional.ofNullable(reason), record.has("embed") && !(NOT_EMBEDS.contains(record.getAsJsonObject("embed").get("$type").getAsString())));
+                        return new Post(new URI(uri), text, createdAt, Optional.ofNullable(reason), record.has("embed") && !(NOT_EMBEDS.contains(record.getAsJsonObject("embed").get("$type").getAsString())));
                     } catch (URISyntaxException | JsonParseException e) {
                         LOGGER.error("Can't parse a post, ignoring it: {}", j, e);
                         return null;

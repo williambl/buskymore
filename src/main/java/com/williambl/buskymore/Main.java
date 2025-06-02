@@ -6,10 +6,13 @@ import java.io.IOException;
 import java.lang.reflect.Type;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Executors;
 
 public class Main {
     public static void main(String[] args) throws IOException {
+        PostFilter.bootstrap();
         Path configPath;
         if (args.length == 0) {
             configPath = Path.of("./buskymore.json");
@@ -45,6 +48,24 @@ public class Main {
                             }
                         }
                         throw exception;
+                    }
+                })
+                .registerTypeAdapter(PostFilter.Fisp.class, new JsonDeserializer<PostFilter.Fisp>() {
+                    @Override
+                    public PostFilter.Fisp deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context) throws JsonParseException {
+                        if (json.isJsonArray()) {
+                            List<PostFilter.Fisp> contents = new ArrayList<>();
+                            for (JsonElement jsonElement : json.getAsJsonArray()) {
+                                contents.add(context.deserialize(jsonElement, PostFilter.Fisp.class));
+                            }
+                            return new PostFilter.Fisp.Array(List.copyOf(contents));
+                        } else if (json instanceof JsonPrimitive prim && prim.isString()) {
+                            return new PostFilter.Fisp.Str(prim.getAsString());
+                        } else if (json instanceof JsonPrimitive prim && prim.isBoolean()) {
+                            return new PostFilter.Fisp.Bool(prim.getAsBoolean());
+                        } else {
+                            return new PostFilter.Fisp.Str(json.toString());
+                        }
                     }
                 })
                 .create();
