@@ -6,6 +6,73 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 // bini (buskymore ini)
+
+/**
+ * bini (buskymore ini)
+ * <p>ok so heres the syntax:</p>
+ *
+ * <ul>
+ * <li>
+ * this object has 3 'atomic fields', i.e. fields which are just regular values (two are strings, one is an integer):
+ * </li>
+ * <pre>
+ * a = fhjsaflhds
+ * b = fdjgkhdfslg
+ * c = 1
+ * </pre>
+ * <li>
+ * this object has another object as a field. therefore instead of the `= whatever` syntax we use a `:` syntax, then the value is written (with an extra layer of indentation) on the next line:
+ * </li>
+ * <pre>
+ * mySimpleValue = 1
+ * myComplexValue:
+ *   a = fhjsaflhds
+ *   b = fdjgkhdfslg
+ *   c = 1
+ * </pre>
+ * <li>
+ * this object has a list as a field. Lists are done in a bullet-point format, with `[]` as the bullet point:
+ * </li>
+ * <pre>
+ * mySimpleValue = 1
+ * myComplexValue:
+ *   a = fhjsaflhds
+ *   b = fdjgkhdfslg
+ *   c = 1
+ * myList:
+ *   [] 1
+ *   [] 2
+ *   [] 3
+ * </pre>
+ * <li>
+ * lists can also contain complex objects. just like before, the objects are put onto the next line with an extra layer of indentation:
+ * </li>
+ * <pre>
+ * myList:
+ *   []
+ *     name = first
+ *     field1 = a
+ *   []
+ *     name = second
+ *     field1 = b
+ *   []
+ *     name = third
+ *     field1 = c
+ * </pre>
+ * <li>
+ * there's a shortcut syntax for objects with a `name` field in a list - the name goes into the bulletpoint. so the above can also be written as:
+ * </li>
+ * <pre>
+ * myList:
+ *   [first]
+ *     field1 = a
+ *   [second]
+ *     field1 = b
+ *   [third]
+ *     field1 = c
+ * </pre>
+ * </ul>
+ */
 public class Bini {
     public <T> T parse(Class<T> clazz, List<String> lines) {
         if (this.isAtomic(clazz)) {
