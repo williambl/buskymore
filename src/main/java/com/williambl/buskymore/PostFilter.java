@@ -3,11 +3,16 @@ package com.williambl.buskymore;
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
+
+import static com.williambl.buskymore.PostFilter.Fisp.arr;
+import static com.williambl.buskymore.PostFilter.Fisp.str;
 
 @FunctionalInterface
 public interface PostFilter extends Predicate<Post> {
-    Parser PARSER = new Parser();
+    Functions FUNCTIONS = new Functions();
     PostFilter TRUE = $ -> true;
     PostFilter FALSE = $ -> false;
 
@@ -227,26 +232,67 @@ public interface PostFilter extends Predicate<Post> {
                 return this.values.subList(1, this.values.size());
             }
 
+            public <F extends Fisp> Stream<F> argStream(Class<F> clazz) {
+                return this.values.stream()
+                        .skip(1)
+                        .filter(clazz::isInstance)
+                        .map(clazz::cast);
+            }
+
+            public <F extends Fisp> List<F> arguments(Class<F> clazz) {
+                return this.argStream(clazz).toList();
+            }
+
+
             @Override
             public String toString() {
                 return print(this);
             }
         }
+
+        static Fisp.Array arr(Fisp... values) {
+            return new Array(List.of(values));
+        }
+
+        static Fisp.Str str(String value) {
+            return new Str(value);
+        }
+
+        static Fisp.Bool bool(boolean value) {
+            return new Bool(value);
+        }
     }
 
     @FunctionalInterface
     interface FilterType {
-        PostFilter create(Fisp.Array fisp, Parser parser);
+        PostFilter create(Fisp.Array fisp, Functions functions, Map<String, Object> context);
+        static FilterType unit(PostFilter instance) {
+            return (fisp, functions, context) -> instance;
+        }
+        static FilterType transf(FilterTypeTransformer transformer) {
+            return (fisp, functions, context) -> functions.build(transformer.apply(fisp, functions, context), context);
+        }
+        static FilterType replace(Fisp.Array newExp) {
+            return (fisp, functions, context) -> functions.build(newExp, context);
+        }
     }
 
-    final class Parser {
+    @FunctionalInterface
+    interface FilterTypeTransformer {
+        Fisp.Array apply(Fisp.Array fisp, Functions functions, Map<String, Object> context);
+    }
+
+    final class Functions {
         private final Map<String, FilterType> filterTypes = new HashMap<>();
 
-        public void register(String name, FilterType filterType) {
+        public void register(String name, FilterType filterType, String... aliases) {
             this.filterTypes.put(name, filterType);
+            for (String alias : aliases) {
+                this.filterTypes.put(alias, filterType);
+            }
         }
 
-        public FilterType getFilterType(String name) {
+        public FilterType get(String name) {
             var type = this.filterTypes.get(name);
             if (type == null) {
                 throw new NoSuchElementException("No such filter type %s".formatted(name));
@@ -255,48 +301,67 @@ public interface PostFilter extends Predicate<Post> {
             return type;
         }
 
-        public PostFilter parse(Fisp fisp) {
+        public PostFilter build(Fisp fisp, Map<String, Object> context) {
             switch (fisp) {
                 case Fisp.Bool(boolean value) -> {
                     return value ? PostFilter.TRUE : PostFilter.FALSE;
                 }
                 case Fisp.Str s -> {
-                    return this.parse(new Fisp.Array(List.of(s)));
+                    return this.build(new Fisp.Array(List.of(s)), context);
                 }
                 case Fisp.Array(var values) when values.isEmpty() -> {
                     return PostFilter.TRUE;
                 }
                 case Fisp.Array a when a.values.getFirst() instanceof Fisp.Str(String value) -> {
-                    var type = this.getFilterType(value);
-                    return type.create(a, this);
+                    var type = this.get(value);
+                    return type.create(a, this, context);
                 }
                 default -> {
-                    throw new IllegalArgumentException("I don't know how to parse this -> "+fisp);
+                    throw new IllegalArgumentException("I don't know how to build a filter out of this -> "+fisp);
                 }
             }
         }
 
-        public List<PostFilter> parse(List<Fisp> fisps) {
-            return fisps.stream().map(this::parse).toList();
+        public List<PostFilter> build(List<Fisp> fisps, Map<String, Object> context) {
+            return fisps.stream().map(f -> this.build(f, context)).toList();
         }
     }
 
     static void bootstrap() {
-        PARSER.register("all_of", (fisp, parser) -> {
-            var args = parser.parse(fisp.arguments());
+        FUNCTIONS.register("all_of", (fisp, functions, ctx) -> {
+            var args = functions.build(fisp.arguments(), ctx);
             return post -> args.stream().allMatch(p -> p.test(post));
-        });
-        PARSER.register("any_of", (fisp, parser) -> {
-            var args = parser.parse(fisp.arguments());
+        }, "all", "and");
+        FUNCTIONS.register("any_of", (fisp, functions, ctx) -> {
+            var args = functions.build(fisp.arguments(), ctx);
             return post -> args.stream().anyMatch(p -> p.test(post));
-        });
-        PARSER.register("not", (fisp, parser) -> {
-            var arg = parser.parse(fisp.argument());
+        }, "any", "or", "either");
+        FUNCTIONS.register("not", (fisp, functions, ctx) -> {
+            var arg = functions.build(fisp.argument(), ctx);
             return post -> !arg.test(post);
+        }, "!");
+        FUNCTIONS.register("has_embed", FilterType.unit(Post::hasEmbeds));
+        FUNCTIONS.register("reason_is", (fisp, functions, context) -> {
+            Set<String> values = fisp.argStream(Fisp.Str.class).map(Fisp.Str::value).collect(Collectors.toSet());
+            return post -> post.reason().filter(values::contains).isPresent();
         });
-        PARSER.register("has_embed", (fisp, parser) -> Post::hasEmbeds);
-        PARSER.register("is_retweet", (fisp, parser) -> post -> post.reason().filter("app.bsky.feed.defs#reasonRepost"::equals).isEmpty());
-        PARSER.register("contains_regex", (fisp, parser) -> {
+        FUNCTIONS.register("is_retweet", FilterType.transf((fisp, functions, context) ->
+                arr(str("reason_is"), str("app.bsky.feed.defs#reasonRepost"))));
+        FUNCTIONS.register("author_is", (fisp, functions, context) -> {
+            Set<String> values = fisp.argStream(Fisp.Str.class).map(Fisp.Str::value).collect(Collectors.toSet());
+            return post -> values.contains(post.authorDid());
+        });
+        FUNCTIONS.register("is_authored_by_self", FilterType.transf((fisp, functions, context) -> {
+            String userDid = context.get("userDid") instanceof String str ? str : "";
+            return arr(str("author_is"), str(userDid));
+        }));
+        FUNCTIONS.register("is_self_retweet", FilterType.replace(
+                Fisp.parse("either (not is_retweet) (is_authored_by_self)")));
+        FUNCTIONS.register("labels_contains", (fisp, functions, context) -> {
+            Set<String> values = fisp.argStream(Fisp.Str.class).map(Fisp.Str::value).collect(Collectors.toSet());
+            return post -> post.labels().stream().anyMatch(values::contains);
+        });
+        FUNCTIONS.register("contains_regex", (fisp, functions, ctx) -> {
             var args = fisp.arguments();
             String regex;
             if (args.isEmpty()) {

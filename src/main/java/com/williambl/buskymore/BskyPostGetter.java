@@ -135,7 +135,7 @@ public class BskyPostGetter {
     }
 
     private CompletableFuture<List<Post>> getPosts(Config.PostSource.Feed feed, Instant latest) {
-        var filter = PostFilter.PARSER.parse(feed.filter());
+        var filter = PostFilter.FUNCTIONS.build(feed.filter(), Map.of("userDid", feed.userDid()));
         String atUri = "at://%s/app.bsky.feed.generator/%s".formatted(feed.userDid(), feed.feedKey());
         String queryString = "?feed=%s".formatted(URLEncoder.encode(atUri, StandardCharsets.UTF_8));
         URI uri = URI.create("https://public.api.bsky.app/xrpc/app.bsky.feed.getFeed"+queryString);
@@ -150,7 +150,7 @@ public class BskyPostGetter {
     }
 
     private CompletableFuture<List<Post>> getPosts(Config.PostSource.User user, Instant latest) {
-        var filter = PostFilter.PARSER.parse(user.filter());
+        var filter = PostFilter.FUNCTIONS.build(user.filter(), Map.of("userDid", user.userDid()));
         String queryString = "?actor=%s".formatted(URLEncoder.encode(user.userDid(), StandardCharsets.UTF_8));
         URI uri = URI.create("https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed"+queryString);
         var request = HttpRequest.newBuilder(uri)
@@ -215,9 +215,11 @@ public class BskyPostGetter {
                 .map(j -> {
                     try {
                         var post = j.getAsJsonObject("post");
+                        var author = post.getAsJsonObject("author");
                         var record = post.getAsJsonObject("record");
                         var createdAt = Instant.parse(record.get("createdAt").getAsString());
                         var text = record.getAsJsonPrimitive("text").getAsString();
+                        var authorDid = author.getAsJsonPrimitive("did").getAsString();
                         var uri = post.get("uri").getAsString();
                         String reason;
                         if (j.has("reason")) {
@@ -225,7 +227,23 @@ public class BskyPostGetter {
                         } else {
                             reason = null;
                         }
-                        return new Post(new URI(uri), text, createdAt, Optional.ofNullable(reason), record.has("embed") && !(NOT_EMBEDS.contains(record.getAsJsonObject("embed").get("$type").getAsString())));
+                        Set<String> labels;
+                        if (record.get("labels") instanceof JsonObject labelsObj
+                                && labelsObj.get("$type") instanceof JsonPrimitive labelType
+                                && labelType.getAsString().equals("com.atproto.label.defs#selfLabels")) {
+                            labels = labelsObj.getAsJsonArray("values").asList().stream()
+                                    .map(o -> o.getAsJsonObject().getAsJsonPrimitive("val").getAsString())
+                                    .collect(Collectors.toSet());
+                        } else {
+                            labels = Set.of();
+                        }
+                        return new Post(new URI(uri),
+                                authorDid,
+                                text,
+                                createdAt,
+                                Optional.ofNullable(reason),
+                                record.has("embed") && !(NOT_EMBEDS.contains(record.getAsJsonObject("embed").get("$type").getAsString())),
+                                labels);
                     } catch (URISyntaxException | JsonParseException e) {
                         LOGGER.error("Can't parse a post, ignoring it: {}", j, e);
                         return null;
