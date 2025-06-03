@@ -228,6 +228,7 @@ public class BskyPostGetter {
                             reason = null;
                         }
                         Set<String> labels;
+                        // self labels
                         if (record.get("labels") instanceof JsonObject labelsObj
                                 && labelsObj.get("$type") instanceof JsonPrimitive labelType
                                 && labelType.getAsString().equals("com.atproto.label.defs#selfLabels")) {
@@ -237,13 +238,20 @@ public class BskyPostGetter {
                         } else {
                             labels = Set.of();
                         }
+                        // moderation service labels
+                        if (post.get("labels") instanceof JsonArray labelsArr) {
+                            labels = new HashSet<>(labels);
+                            for (var label : labelsArr.getAsJsonArray()) {
+                                labels.add(label.getAsJsonObject().get("val").getAsString());
+                            }
+                        }
                         return new Post(new URI(uri),
                                 authorDid,
                                 text,
                                 createdAt,
                                 Optional.ofNullable(reason),
                                 record.has("embed") && !(NOT_EMBEDS.contains(record.getAsJsonObject("embed").get("$type").getAsString())),
-                                labels);
+                                Set.copyOf(labels));
                     } catch (URISyntaxException | JsonParseException e) {
                         LOGGER.error("Can't parse a post, ignoring it: {}", j, e);
                         return null;
