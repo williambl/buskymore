@@ -15,13 +15,20 @@ public class Main {
         PostFilter.bootstrap();
         Path configPath;
         if (args.length == 0) {
-            configPath = Path.of("./buskymore.json");
+            configPath = Path.of("./buskymore.bini");
         } else {
             configPath = Path.of(args[0]);
         }
-        var configString = Files.readString(configPath);
-        var gson = makeGson();
-        var config = gson.fromJson(configString, DiscordPostSender.Config.class);
+        DiscordPostSender.Config config;
+        if (configPath.getFileName().toString().endsWith(".json")) {
+            var configString = Files.readString(configPath);
+            var gson = makeGson();
+            config = gson.fromJson(configString, DiscordPostSender.Config.class);
+        } else {
+            var configLines = Files.readAllLines(configPath);
+            var bini = new Bini();
+            config = bini.parse(DiscordPostSender.Config.class, configLines);
+        }
         var sender = new DiscordPostSender(config, Executors.newVirtualThreadPerTaskExecutor());
         sender.run()
                 .exceptionally(e -> {

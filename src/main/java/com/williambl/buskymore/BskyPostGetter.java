@@ -30,7 +30,7 @@ public class BskyPostGetter {
 
     public record Config(String userAgent, int backlogDays, int maxBacklogPosts, String statePath, List<PostSource> postSources) {
 
-        sealed interface PostSource {
+        sealed public interface PostSource {
             record User(String userDid, PostFilter.Fisp filter) implements PostSource {
                 @Override
                 public String uniqueKey() {
