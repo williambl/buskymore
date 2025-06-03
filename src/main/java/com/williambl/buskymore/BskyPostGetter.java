@@ -121,10 +121,10 @@ public class BskyPostGetter {
                     if (post.createdAt().isAfter(latest)) {
                         latest = post.createdAt();
                     }
-                    if (newSources.contains(source) && backlogPostCount++ < this.config.maxBacklogPosts()) {
-                        continue;
-                    }
                     posts.add(post);
+                    if (newSources.contains(source) && backlogPostCount++ > this.config.maxBacklogPosts()) {
+                        break;
+                    }
                 }
                 Instant finalLatest = latest;
                 latestPostTimestamps.compute(source.uniqueKey(), (k, oldLatest) -> oldLatest == null || oldLatest.isBefore(finalLatest) ? finalLatest : oldLatest);
@@ -170,7 +170,7 @@ public class BskyPostGetter {
                 return HttpResponse.BodySubscribers.mapping(
                         string,
                         str -> {
-                            LOGGER.debug("From: {}, received non-OK status code: {}\nWith body: {}", uri, responseInfo.statusCode(), str);
+                            LOGGER.error("From: {}, received non-OK status code: {}\nWith body: {}", uri, responseInfo.statusCode(), str);
                             return Optional.empty();//DataResult.error(() -> "Received non-OK status code %s (with body %s)".formatted(responseInfo.statusCode(), str));
                         });
             }
@@ -179,7 +179,7 @@ public class BskyPostGetter {
                     string,
                     s -> {
                         try {
-                            LOGGER.debug("From: {}, received {}", uri, s);
+                            LOGGER.trace("From: {}, received {}", uri, s);
                             return Optional.of(JsonParser.parseString(s));
                         } catch (JsonParseException e) {
                             LOGGER.error("From: {}, received invalid JSON {}: ", uri, s, e);
@@ -259,6 +259,7 @@ public class BskyPostGetter {
                 })
                 .filter(Objects::nonNull)
                 .filter(predicate)
+                .sorted(Comparator.comparing(Post::createdAt))
                 .toList();
     }
 }
