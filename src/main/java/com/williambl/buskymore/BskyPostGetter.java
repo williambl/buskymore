@@ -135,7 +135,7 @@ public class BskyPostGetter {
     }
 
     private CompletableFuture<List<Post>> getPosts(Config.PostSource.Feed feed, Instant latest) {
-        var filter = PostFilter.FUNCTIONS.build(feed.filter(), Map.of("userDid", feed.userDid()));
+        var filter = PostFilter.FUNCTIONS.build(feed.filter());
         String atUri = "at://%s/app.bsky.feed.generator/%s".formatted(feed.userDid(), feed.feedKey());
         String queryString = "?feed=%s".formatted(URLEncoder.encode(atUri, StandardCharsets.UTF_8));
         URI uri = URI.create("https://public.api.bsky.app/xrpc/app.bsky.feed.getFeed"+queryString);
@@ -146,11 +146,11 @@ public class BskyPostGetter {
         var bodyHandler = this.jsonBodyHandler(uri);
         return this.httpClient.sendAsync(request, bodyHandler)
                 .thenApply(HttpResponse::body)
-                .thenApply(j -> this.parseFeed(j, p -> p.createdAt().isAfter(latest) && filter.test(p)));
+                .thenApply(j -> this.parseFeed(j, p -> p.createdAt().isAfter(latest) && filter.test(PostFilter.FilterContext.of(p, feed.userDid()))));
     }
 
     private CompletableFuture<List<Post>> getPosts(Config.PostSource.User user, Instant latest) {
-        var filter = PostFilter.FUNCTIONS.build(user.filter(), Map.of("userDid", user.userDid()));
+        var filter = PostFilter.FUNCTIONS.build(user.filter());
         String queryString = "?actor=%s".formatted(URLEncoder.encode(user.userDid(), StandardCharsets.UTF_8));
         URI uri = URI.create("https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed"+queryString);
         var request = HttpRequest.newBuilder(uri)
@@ -160,7 +160,7 @@ public class BskyPostGetter {
         var bodyHandler = this.jsonBodyHandler(uri);
         return this.httpClient.sendAsync(request, bodyHandler)
                 .thenApply(HttpResponse::body)
-                .thenApply(j -> this.parseFeed(j, p -> p.createdAt().isAfter(latest) && filter.test(p)));
+                .thenApply(j -> this.parseFeed(j, p -> p.createdAt().isAfter(latest) && filter.test(PostFilter.FilterContext.of(p, user.userDid()))));
     }
 
     private HttpResponse.BodyHandler<Optional<JsonElement>> jsonBodyHandler(URI uri) {
