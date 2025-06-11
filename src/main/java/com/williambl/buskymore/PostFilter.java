@@ -3,7 +3,6 @@ package com.williambl.buskymore;
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
@@ -357,6 +356,10 @@ public interface PostFilter extends Predicate<PostFilter.FilterContext> {
             return type;
         }
 
+        public Optional<FispFunc> maybeGet(String name) {
+            return Optional.ofNullable(this.filterTypes.get(name));
+        }
+
         public Fisp eval(Fisp fisp, FilterContext context) {
             return switch (fisp) {
                 case Fisp.Str s -> this.eval(new Fisp.Array(List.of(s)), context);
@@ -367,6 +370,20 @@ public interface PostFilter extends Predicate<PostFilter.FilterContext> {
                 default -> fisp;
             };
         }
+
+        public String evalToString(Fisp fisp, FilterContext context) {
+            return switch (fisp) {
+                case Fisp.Str(String value) -> value;
+                case Fisp.Bool(boolean value) -> Boolean.toString(value);
+                case Fisp.Array a when a.values.getFirst() instanceof Fisp.Str(String value) ->
+                        this.maybeGet(value)
+                                .map(f -> this.evalToString(f.apply(a, this, context), context))
+                                .orElse(value);
+                case Fisp.Array a when a.values.isEmpty() -> "";
+                case Fisp.Array a -> this.evalToString(a.values.getFirst(), context);
+            };
+        }
+
 
         public PostFilter build(Fisp fisp) {
             return filterContext -> switch (this.eval(fisp, filterContext)) {
@@ -379,19 +396,19 @@ public interface PostFilter extends Predicate<PostFilter.FilterContext> {
 
     static void bootstrap() {
         FUNCTIONS.register("all_of", FispFunc.filter((fisp, functions, ctx) ->
-                        fisp.argStream().allMatch(f -> isTruthy(functions.eval(fisp, ctx)))),
+                        fisp.argStream().allMatch(f -> isTruthy(functions.eval(f, ctx)))),
                 "all", "and");
         FUNCTIONS.register("any_of", FispFunc.filter((fisp, functions, ctx) ->
-                        fisp.argStream().anyMatch(f -> isTruthy(functions.eval(fisp, ctx)))),
+                        fisp.argStream().anyMatch(f -> isTruthy(functions.eval(f, ctx)))),
                 "any", "or", "either");
         FUNCTIONS.register("not", FispFunc.filter((fisp, functions, ctx) ->
-                        !isTruthy(functions.eval(fisp, ctx))),
+                        !isTruthy(functions.eval(fisp.argument(), ctx))),
                 "!");
         FUNCTIONS.register("has_embed", FispFunc.postFilter(p -> p.post().hasEmbeds()));
         FUNCTIONS.register("reason_is", FispFunc.filter((fisp, functions, context) ->
                 context.post().reason().filter(r ->
                                 fisp.argStream()
-                                        .map(a -> functions.eval(fisp, context).cast(Str.class).value())
+                                        .map(a -> functions.evalToString(a, context))
                                         .anyMatch(r::equals))
                         .isPresent()));
         FUNCTIONS.register("is_retweet", FispFunc.replace(
@@ -399,7 +416,7 @@ public interface PostFilter extends Predicate<PostFilter.FilterContext> {
         FUNCTIONS.register("author_is", FispFunc.filter((fisp, functions, context) ->
                 Optional.of(context.post().authorDid()).filter(r ->
                                 fisp.argStream()
-                                        .map(a -> functions.eval(fisp, context).cast(Str.class).value())
+                                        .map(a -> functions.evalToString(a, context))
                                         .anyMatch(r::equals))
                         .isPresent()));
         FUNCTIONS.register("is_authored_by_self", FispFunc.transf((fisp, functions, context) ->
@@ -409,7 +426,7 @@ public interface PostFilter extends Predicate<PostFilter.FilterContext> {
         FUNCTIONS.register("labels_contains", FispFunc.filter((fisp, functions, context) ->
                 context.post().labels().stream().anyMatch(r ->
                         fisp.argStream()
-                                .map(a -> functions.eval(fisp, context).cast(Str.class).value())
+                                .map(a -> functions.evalToString(a, context))
                                 .anyMatch(r::equals))));
         FUNCTIONS.register("contains_regex", FispFunc.filter((fisp, functions, ctx) -> {
             var arg = fisp.argument().cast(Str.class).value();
