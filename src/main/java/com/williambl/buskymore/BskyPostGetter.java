@@ -251,7 +251,8 @@ public class BskyPostGetter {
                                 createdAt,
                                 Optional.ofNullable(reason),
                                 record.has("embed") && !(NOT_EMBEDS.contains(record.getAsJsonObject("embed").get("$type").getAsString())),
-                                Set.copyOf(labels));
+                                Set.copyOf(labels),
+                                j);
                     } catch (URISyntaxException | JsonParseException e) {
                         LOGGER.error("Can't parse a post, ignoring it: {}", j, e);
                         return null;
