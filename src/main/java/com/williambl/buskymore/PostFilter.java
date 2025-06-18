@@ -1,5 +1,7 @@
 package com.williambl.buskymore;
 
+import com.google.gson.*;
+
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
@@ -8,6 +10,10 @@ import java.util.stream.Stream;
 
 import static com.williambl.buskymore.PostFilter.Fisp.*;
 
+
+//todo
+// remove bool type
+// proper rules for how to evaluate things to different types
 @FunctionalInterface
 public interface PostFilter extends Predicate<PostFilter.FilterContext> {
     Functions FUNCTIONS = new Functions();
@@ -245,7 +251,6 @@ public interface PostFilter extends Predicate<PostFilter.FilterContext> {
                 return this.argStream(clazz).toList();
             }
 
-
             @Override
             public String toString() {
                 return print(this);
@@ -264,11 +269,21 @@ public interface PostFilter extends Predicate<PostFilter.FilterContext> {
             return new Bool(value);
         }
 
+        static Fisp fromJson(JsonElement jsonElement) {
+            return switch (jsonElement) {
+                case JsonObject obj -> new Array(obj.entrySet().stream().<Fisp>map(e -> arr(str(e.getKey()), fromJson(e.getValue()))).toList());
+                case JsonArray arr -> new Array(arr.asList().stream().map(Fisp::fromJson).toList());
+                case JsonPrimitive prim when prim.isBoolean() -> bool(prim.getAsBoolean());
+                case JsonPrimitive prim -> str(prim.getAsString());
+                default -> str(""); // null
+            };
+        }
+
         static boolean isTruthy(Fisp fisp) {
             return switch (fisp) {
-                case Fisp.Array(List<Fisp> elements) -> elements.isEmpty();
-                case Fisp.Bool(boolean value) -> value;
-                case Fisp.Str(String value) -> !value.isBlank();
+                case Array(List<Fisp> elements) -> elements.isEmpty();
+                case Bool(boolean value) -> value;
+                case Str(String value) -> !value.isBlank();
             };
         }
 
@@ -306,34 +321,37 @@ public interface PostFilter extends Predicate<PostFilter.FilterContext> {
     interface FispFunc {
         static final FispFunc EVAL = (fisp, functions, context) -> functions.eval(fisp, context);
 
-        Fisp apply(Fisp.Array fisp, Functions functions, FilterContext context);
+        Fisp apply(Array fisp, Functions functions, FilterContext context);
 
         @FunctionalInterface
         interface ToBool {
-            boolean apply(Fisp.Array fisp, Functions functions, FilterContext context);
+            boolean apply(Array fisp, Functions functions, FilterContext context);
         }
         @FunctionalInterface
         interface ToStr {
-            String apply(Fisp.Array fisp, Functions functions, FilterContext context);
+            String apply(Array fisp, Functions functions, FilterContext context);
         }
         @FunctionalInterface
         interface ToArray {
-            List<Fisp> apply(Fisp.Array fisp, Functions functions, FilterContext context);
+            List<Fisp> apply(Array fisp, Functions functions, FilterContext context);
         }
         static FispFunc filter(ToBool func) {
-            return (fisp, functions, context) -> new Fisp.Bool(func.apply(fisp, functions, context));
+            return (fisp, functions, context) -> new Bool(func.apply(fisp, functions, context));
         }
         static FispFunc postFilter(PostFilter filter) {
-            return (fisp, functions, context) -> new Fisp.Bool(filter.test(context));
+            return (fisp, functions, context) -> new Bool(filter.test(context));
         }
         static FispFunc toStr(ToStr func) {
-            return (fisp, functions, context) -> new Fisp.Str(func.apply(fisp, functions, context));
+            return (fisp, functions, context) -> new Str(func.apply(fisp, functions, context));
         }
         static FispFunc transf(ToArray transformer) {
-            return (fisp, functions, context) -> functions.eval(new Fisp.Array(transformer.apply(fisp, functions, context)), context);
+            return (fisp, functions, context) -> functions.eval(new Array(transformer.apply(fisp, functions, context)), context);
         }
-        static FispFunc replace(Fisp.Array newExp) {
+        static FispFunc replace(Array newExp) {
             return (fisp, functions, context) -> functions.eval(newExp, context);
+        }
+        static FispFunc of(ToArray transformer) {
+            return (fisp, functions, context) -> new Array(transformer.apply(fisp, functions, context));
         }
     }
 
@@ -362,8 +380,8 @@ public interface PostFilter extends Predicate<PostFilter.FilterContext> {
 
         public Fisp eval(Fisp fisp, FilterContext context) {
             return switch (fisp) {
-                case Fisp.Str s -> this.eval(new Fisp.Array(List.of(s)), context);
-                case Fisp.Array a when a.values.getFirst() instanceof Fisp.Str(String value) -> {
+                case Str s -> this.eval(new Array(List.of(s)), context);
+                case Array a when a.values.getFirst() instanceof Str(String value) -> {
                     var type = this.get(value);
                     yield  type.apply(a, this, context);
                 }
@@ -373,37 +391,71 @@ public interface PostFilter extends Predicate<PostFilter.FilterContext> {
 
         public String evalToString(Fisp fisp, FilterContext context) {
             return switch (fisp) {
-                case Fisp.Str(String value) -> value;
-                case Fisp.Bool(boolean value) -> Boolean.toString(value);
-                case Fisp.Array a when a.values.getFirst() instanceof Fisp.Str(String value) ->
+                case Str(String value) -> value;
+                case Bool(boolean value) -> Boolean.toString(value);
+                case Array a when a.values.getFirst() instanceof Str(String value) ->
                         this.maybeGet(value)
                                 .map(f -> this.evalToString(f.apply(a, this, context), context))
                                 .orElse(value);
-                case Fisp.Array a when a.values.isEmpty() -> "";
-                case Fisp.Array a -> this.evalToString(a.values.getFirst(), context);
+                case Array a when a.values.isEmpty() -> "";
+                case Array a -> this.evalToString(a.values.getFirst(), context);
             };
         }
 
+        public boolean evalToBool(Fisp fisp, FilterContext context) {
+            return switch (fisp) {
+                case Str(String value) -> !value.isBlank();
+                case Bool(boolean value) -> value;
+                case Array a when a.values.getFirst() instanceof Str(String value) ->
+                        this.maybeGet(value)
+                                .map(f -> this.evalToBool(f.apply(a, this, context), context))
+                                .orElse(this.evalToBool(str(value), context));
+                case Array a when a.values.isEmpty() -> false;
+                case Array a -> this.evalToBool(a.values.getFirst(), context);
+            };
+        }
 
         public PostFilter build(Fisp fisp) {
             return filterContext -> switch (this.eval(fisp, filterContext)) {
-                case Fisp.Array(List<Fisp> elements) -> elements.isEmpty();
-                case Fisp.Bool(boolean value) -> value;
-                case Fisp.Str(String value) -> !value.isBlank();
+                case Array(List<Fisp> elements) -> elements.isEmpty();
+                case Bool(boolean value) -> value;
+                case Str(String value) -> !value.isBlank();
             };
         }
     }
 
     static void bootstrap() {
         FUNCTIONS.register("all_of", FispFunc.filter((fisp, functions, ctx) ->
-                        fisp.argStream().allMatch(f -> isTruthy(functions.eval(f, ctx)))),
+                        fisp.argStream().allMatch(f -> functions.evalToBool(f, ctx))),
                 "all", "and");
         FUNCTIONS.register("any_of", FispFunc.filter((fisp, functions, ctx) ->
-                        fisp.argStream().anyMatch(f -> isTruthy(functions.eval(f, ctx)))),
+                        fisp.argStream().anyMatch(f -> functions.evalToBool(f, ctx))),
                 "any", "or", "either");
         FUNCTIONS.register("not", FispFunc.filter((fisp, functions, ctx) ->
-                        !isTruthy(functions.eval(fisp.argument(), ctx))),
+                        !functions.evalToBool(fisp.argument(), ctx)),
                 "!");
+        FUNCTIONS.register("extract", FispFunc.of((fisp, functions, context) -> {
+            List<JsonPath.Segment> segments = new ArrayList<>();
+            for (Iterator<Fisp> iterator = fisp.arguments().iterator(); iterator.hasNext(); ) {
+                var arg = iterator.next();
+                if (segments.isEmpty() && arg instanceof Str(String v) && v.equals("$")) {
+                    continue;
+                }
+                if (arg instanceof Str(String v) && v.equals(".")) {
+                    Fisp next = iterator.next();
+                    List<JsonPath.Selector> selectors = makeJsonPathSelectorsFromFisp(next);
+                    segments.add(new JsonPath.Segment.ChildSegment(selectors));
+                } else if (arg instanceof Str(String v) && v.equals("..")) {
+                    Fisp next = iterator.next();
+                    List<JsonPath.Selector> selectors = makeJsonPathSelectorsFromFisp(next);
+                    segments.add(new JsonPath.Segment.ChildSegment(selectors));
+                } else {
+                    //TODO think about errors.
+                    continue;
+                }
+            }
+            return new JsonPath(segments).select(context.post().json()).map(Fisp::fromJson).toList();
+        }));
         FUNCTIONS.register("has_embed", FispFunc.postFilter(p -> p.post().hasEmbeds()));
         FUNCTIONS.register("reason_is", FispFunc.filter((fisp, functions, context) ->
                 context.post().reason().filter(r ->
@@ -422,7 +474,7 @@ public interface PostFilter extends Predicate<PostFilter.FilterContext> {
         FUNCTIONS.register("is_authored_by_self", FispFunc.transf((fisp, functions, context) ->
                 List.of(str("author_is"), context instanceof FilterContext.WithUser wu ? str(wu.userDid()) : str(""))));
         FUNCTIONS.register("is_self_retweet", FispFunc.replace(
-                Fisp.parse("either (not is_retweet) (is_authored_by_self)")));
+                parse("either (not is_retweet) (is_authored_by_self)")));
         FUNCTIONS.register("labels_contains", FispFunc.filter((fisp, functions, context) ->
                 context.post().labels().stream().anyMatch(r ->
                         fisp.argStream()
@@ -433,5 +485,28 @@ public interface PostFilter extends Predicate<PostFilter.FilterContext> {
             var pattern = Pattern.compile(arg);
             return pattern.matcher(ctx.post().text()).find(0);
         }));
+    }
+
+    static final Pattern SLICE_PATTERN = Pattern.compile("(-?\\d+)?:(-?\\d+)?:(-?\\d+)?");
+
+    static List<JsonPath.Selector> makeJsonPathSelectorsFromFisp(Fisp next) {
+        return switch (next) {
+            case Bool(boolean value) -> makeJsonPathSelectorsFromFisp(str(String.valueOf(value)));
+            case Str(String value) when value.equals("*") -> List.of(JsonPath.all());
+            case Str(String value) when value.chars().allMatch(i -> i >= '0' && i <= '9') -> List.of(JsonPath.idx(Integer.parseInt(value)));
+            case Str(String value) when SLICE_PATTERN.matcher(value).matches() -> {
+                var matcher = SLICE_PATTERN.matcher(value);
+                //noinspection ResultOfMethodCallIgnored
+                matcher.find();
+                yield List.of(JsonPath.slice(
+                        matcher.group(1).isEmpty() ? null : Integer.parseInt(matcher.group(1)),
+                        matcher.group(2).isEmpty() ? null : Integer.parseInt(matcher.group(2)),
+                        matcher.group(3).isEmpty() ? null : Integer.parseInt(matcher.group(3))
+                ));
+            }
+            case Str(String value) -> List.of(JsonPath.name(value));
+            case Array(List<Fisp> values) when values.size() == 2 && values.getFirst().equals(str("name")) -> List.of(JsonPath.name(values.get(1).cast(Str.class).value()));
+            case Array(List<Fisp> values) -> values.stream().flatMap(v -> makeJsonPathSelectorsFromFisp(v).stream()).toList();
+        };
     }
 }
