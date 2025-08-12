@@ -317,7 +317,7 @@ public class BskyPostGetter {
                                 this.buffer.add(p);
                             });
                     LOGGER.info("Got {} posts from {} (just chose {}/{})", this.buffer.size(), this.sourceName(), this.buffer.size() - bufferSize, feed.getAsJsonArray().size());
-                    if (this.oldest.isAfter(this.newerThanLimit) && !(this.buffer.size() > this.limit)) {
+                    if (this.oldest.isAfter(this.newerThanLimit) && !(this.buffer.size() >= this.limit)) {
                         if (this.cursor != null) {
                             if (Objects.equals(oldCursor, this.cursor)) {
                                 LOGGER.info("Reached end of feed for {}", this.sourceName());
