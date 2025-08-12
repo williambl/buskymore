@@ -405,6 +405,7 @@ public class BskyPostGetter {
                     createdAt,
                     Optional.ofNullable(reason),
                     record.has("embed") && !(NOT_EMBEDS.contains(record.getAsJsonObject("embed").get("$type").getAsString())),
+                    record.has("embed") && record.getAsJsonObject("embed").get("$type").getAsString().startsWith("app.bsky.embed.video"),
                     Set.copyOf(labels),
                     j);
         } catch (URISyntaxException | JsonParseException e) {

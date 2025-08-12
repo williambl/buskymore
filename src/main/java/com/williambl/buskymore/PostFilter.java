@@ -405,6 +405,7 @@ public interface PostFilter extends Predicate<PostFilter.FilterContext> {
                         !isTruthy(functions.eval(fisp.argument(), ctx))),
                 "!");
         FUNCTIONS.register("has_embed", FispFunc.postFilter(p -> p.post().hasEmbeds()));
+        FUNCTIONS.register("has_video", FispFunc.postFilter(p -> p.post().hasVideos()));
         FUNCTIONS.register("reason_is", FispFunc.filter((fisp, functions, context) ->
                 context.post().reason().filter(r ->
                                 fisp.argStream()
