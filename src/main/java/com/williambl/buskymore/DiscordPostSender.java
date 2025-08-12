@@ -187,6 +187,6 @@ public class DiscordPostSender {
     private static String makeEmbedUrl(URI uri) {
         String did = uri.getAuthority();
         String postId = uri.getPath().split("/")[2];
-        return "https://fxbsky.app/profile/%s/post/%s".formatted(did, postId);
+        return "https://bsky.app/profile/%s/post/%s".formatted(did, postId);
     }
 }
