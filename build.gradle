@@ -26,7 +26,10 @@ test {
 
 jar {
     manifest {
+        attributes 'Package': 'com.williambl.buskymore'
         attributes 'Main-Class': 'com.williambl.buskymore.Main'
+        attributes 'Implementation-Title': 'Buskymore'
+        attributes 'Implementation-Version': project.version
     }
 }
 

@@ -30,16 +30,16 @@ public class DiscordPostSender {
     private final RateLimitedExecutor rateLimitedExecutor;
     private final Map<BskyPostGetter, Config.Mapping> postGetters = new HashMap<>();
 
-    public record Config(String token, String botOwnerUri, String botVersion, List<Mapping> mappings) {
+    public record Config(String token, String botOwnerUri, List<Mapping> mappings) {
         public record Mapping(String name, BskyPostGetter.Config getterConfig, List<String> channelIds) {}
     }
-    public DiscordPostSender(Config config, ExecutorService executor) {
+    public DiscordPostSender(Config config, String botVersion, String botName, ExecutorService executor) {
         this.rateLimitedExecutor = new RateLimitedExecutor(40, Duration.ofSeconds(1), executor);
         this.httpClient = HttpClient.newBuilder()
                 .executor(executor)
                 .build();
         this.token = config.token();
-        this.userAgent = "DiscordBot (%s, %s) buskymore".formatted(config.botOwnerUri(), config.botVersion());
+        this.userAgent = "DiscordBot (%s, %s) %s".formatted(config.botOwnerUri(), botVersion, botName);
         for (var mapping : config.mappings) {
             this.postGetters.put(new BskyPostGetter(mapping.getterConfig(), executor), mapping);
         }

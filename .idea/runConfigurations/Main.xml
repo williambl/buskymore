@@ -2,7 +2,7 @@
   <configuration default="false" name="Main" type="Application" factoryName="Application" nameIsGenerated="true">
     <option name="MAIN_CLASS_NAME" value="com.williambl.buskymore.Main" />
     <module name="buskymore.main" />
-    <option name="VM_PARAMETERS" value="-Dbuskymore.disableMessageSending=true" />
+    <option name="VM_PARAMETERS" value="-Dbuskymore.disableMessageSending=true -Dbuskymore.nameOverride=buskymore -Dbuskymore.versionOverride=local" />
     <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/run" />
     <extension name="coverage">
       <pattern>

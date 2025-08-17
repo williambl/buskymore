@@ -8,10 +8,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 
 public class Main {
     public static final boolean DISABLE_SENDING_MESSAGES = Boolean.getBoolean("buskymore.disableMessageSending");
+    public static final String NAME_OVERRIDE = System.getProperty("buskymore.nameOverride");
+    public static final String VERSION_OVERRIDE = System.getProperty("buskymore.versionOverride");
+    public static final String NAME = Optional.ofNullable(Main.class.getPackage().getImplementationTitle()).orElse(NAME_OVERRIDE);
+    public static final String VERSION = Optional.ofNullable(Main.class.getPackage().getImplementationVersion()).orElse(VERSION_OVERRIDE);
 
     public static void main(String[] args) throws IOException {
         PostFilter.bootstrap();
@@ -31,7 +36,7 @@ public class Main {
             var bini = new Bini();
             config = bini.parse(DiscordPostSender.Config.class, configLines);
         }
-        var sender = new DiscordPostSender(config, Executors.newVirtualThreadPerTaskExecutor());
+        var sender = new DiscordPostSender(config, NAME, VERSION, Executors.newVirtualThreadPerTaskExecutor());
         sender.run()
                 .exceptionally(e -> {
                     sender.fail(e);
