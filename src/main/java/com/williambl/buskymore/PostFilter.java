@@ -59,6 +59,7 @@ public interface PostFilter extends Predicate<PostFilter.FilterContext> {
                     }
                 } else {
                     if (isEscaped) {
+                        isEscaped = false;
                         if (charAt == 'u') {
                             int codepoint = Integer.parseInt(input.substring(cursor[0]+1, cursor[0]+5), 16);
                             res.appendCodePoint(codepoint);
