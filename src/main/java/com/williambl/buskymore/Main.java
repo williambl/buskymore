@@ -11,6 +11,8 @@ import java.util.List;
 import java.util.concurrent.Executors;
 
 public class Main {
+    public static final boolean DISABLE_SENDING_MESSAGES = Boolean.getBoolean("buskymore.disableMessageSending");
+
     public static void main(String[] args) throws IOException {
         PostFilter.bootstrap();
         Path configPath;

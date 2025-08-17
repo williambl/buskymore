@@ -56,6 +56,10 @@ public class DiscordPostSender {
     }
 
     private CompletableFuture<Void> sendMessage(String channelId, String message) {
+        if (Main.DISABLE_SENDING_MESSAGES) {
+            LOGGER.info("Not sending message to {}: {}", channelId, message);
+            return CompletableFuture.completedFuture(null);
+        }
         var payload = new JsonObject();
         payload.addProperty("content", message);
         var uri = URI.create(SEND_MESSAGE_URI_TEMPLATE.formatted(channelId));
