@@ -237,7 +237,7 @@ public class BskyPostGetter {
         private final List<Post> buffer = new ArrayList<>(PER_REQUEST_LIMIT);
         private Predicate<Post> predicate = $ -> true;
         private int limit = Integer.MAX_VALUE;
-        private Instant newerThanLimit = Instant.MIN;
+        private Instant mustBeNewerThan = Instant.MIN;
         private Instant latest = Instant.MIN;
         private Instant oldest = Instant.MAX;
         protected String cursor = null;
@@ -270,7 +270,7 @@ public class BskyPostGetter {
             if (this.built) {
                 throw new IllegalStateException("Cannot modify an already-built PostStream!");
             }
-            this.newerThanLimit = instant;
+            this.mustBeNewerThan = instant;
             return this;
         }
 
@@ -305,6 +305,11 @@ public class BskyPostGetter {
                             .map(BskyPostGetter.this::parsePost)
                             .filter(Objects::nonNull)
                             .sorted(Comparator.comparing(Post::createdAt))
+                            .peek(p -> {
+                                if (p.createdAt().isBefore(this.oldest)) {
+                                    this.oldest = p.createdAt();
+                                }
+                            })
                             .filter(this.predicate)
                             .limit(this.limit - bufferSize)
                             .forEach(p -> {
@@ -317,7 +322,7 @@ public class BskyPostGetter {
                                 this.buffer.add(p);
                             });
                     LOGGER.info("Got {} posts from {} (just chose {}/{})", this.buffer.size(), this.sourceName(), this.buffer.size() - bufferSize, feed.getAsJsonArray().size());
-                    if (this.oldest.isAfter(this.newerThanLimit) && !(this.buffer.size() >= this.limit)) {
+                    if (this.oldest.isAfter(this.mustBeNewerThan) && !(this.buffer.size() >= this.limit)) {
                         if (this.cursor != null) {
                             if (Objects.equals(oldCursor, this.cursor)) {
                                 LOGGER.info("Reached end of feed for {}", this.sourceName());
