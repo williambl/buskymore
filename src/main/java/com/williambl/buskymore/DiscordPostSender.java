@@ -28,10 +28,10 @@ public class DiscordPostSender {
     private final String userAgent;
     private final HttpClient httpClient;
     private final RateLimitedExecutor rateLimitedExecutor;
-    private final Map<BskyPostGetter, Config.Mapping> postGetters = new HashMap<>();
+    private final Map<PostGetter, Config.Mapping> postGetters = new HashMap<>();
 
     public record Config(String token, String botOwnerUri, List<Mapping> mappings) {
-        public record Mapping(String name, BskyPostGetter.Config getterConfig, List<String> channelIds) {}
+        public record Mapping(String name, PostGetter.Config getterConfig, List<String> channelIds) {}
     }
     public DiscordPostSender(Config config, String botVersion, String botName, ExecutorService executor) {
         this.rateLimitedExecutor = new RateLimitedExecutor(40, Duration.ofSeconds(1), executor);
@@ -41,7 +41,7 @@ public class DiscordPostSender {
         this.token = config.token();
         this.userAgent = "DiscordBot (%s, %s) %s".formatted(config.botOwnerUri(), botVersion, botName);
         for (var mapping : config.mappings) {
-            this.postGetters.put(new BskyPostGetter(mapping.getterConfig(), executor), mapping);
+            this.postGetters.put(new PostGetter(mapping.getterConfig(), executor), mapping);
         }
     }
 
@@ -143,7 +143,7 @@ public class DiscordPostSender {
         for (var entry : this.postGetters.entrySet()) {
             var postGetter = entry.getKey();
             var mapping = entry.getValue();
-            BskyPostGetter.State state;
+            PostGetter.State state;
             try {
                 state = postGetter.readState();
             } catch (IOException e) {

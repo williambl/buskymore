@@ -25,21 +25,22 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
-public class BskyPostGetter {
-    public static final Logger LOGGER = LoggerFactory.getLogger(BskyPostGetter.class);
+public class PostGetter {
+    public static final Logger LOGGER = LoggerFactory.getLogger(PostGetter.class);
     private static final Set<String> NOT_EMBEDS = Set.of("app.bsky.embed.external", "app.bsky.embed.record");
 
     public record Config(String userAgent, int backlogDays, int maxBacklogPosts, String statePath, List<PostSource> postSources) {
 
         sealed public interface PostSource {
-            record User(String userDid, PostFilter.Fisp filter) implements PostSource {
+            record BskyUser(String userDid, PostFilter.Fisp filter) implements PostSource {
                 @Override
                 public String uniqueKey() {
                     return this.userDid;
                 }
             }
-            record Feed(String userDid, String feedKey, PostFilter.Fisp filter) implements PostSource {
+            record BskyFeed(String userDid, String feedKey, PostFilter.Fisp filter) implements PostSource {
                 @Override
                 public String uniqueKey() {
                     return "%s/app.bsky.feed.generator/%s".formatted(this.userDid, this.feedKey);
@@ -51,7 +52,6 @@ public class BskyPostGetter {
     }
 
     public record State(Map<String, Instant> latestPostTimestamps) {}
-
     public record Result(State state, List<Post> posts) {}
 
     private final HttpClient httpClient;
@@ -59,7 +59,7 @@ public class BskyPostGetter {
     private final Config config;
     private final Path statePath;
 
-    public BskyPostGetter(Config config, ExecutorService executor) {
+    public PostGetter(Config config, ExecutorService executor) {
         this.config = config;
         this.executor = executor;
         this.httpClient = HttpClient.newBuilder()
@@ -109,18 +109,18 @@ public class BskyPostGetter {
                 Instant latestPostTimestamp = state.latestPostTimestamps().getOrDefault(postSource.uniqueKey(), Instant.now().minus(this.config.backlogDays(), ChronoUnit.DAYS));
                 int maxPostCount = newSources.contains(postSource) ? this.config.maxBacklogPosts() : Integer.MAX_VALUE;
                 var filter = PostFilter.FUNCTIONS.build(switch (postSource) {
-                    case Config.PostSource.Feed feed -> feed.filter();
-                    case Config.PostSource.User user -> user.filter();
+                    case Config.PostSource.BskyFeed feed -> feed.filter();
+                    case Config.PostSource.BskyUser user -> user.filter();
                 });
 
                 Function<Post, PostFilter.FilterContext> filterContextFactory = switch (postSource) {
-                    case Config.PostSource.Feed feed -> PostFilter.FilterContext::of;
-                    case Config.PostSource.User user -> p -> PostFilter.FilterContext.of(p, user.userDid());
+                    case Config.PostSource.BskyFeed feed -> PostFilter.FilterContext::of;
+                    case Config.PostSource.BskyUser user -> p -> PostFilter.FilterContext.of(p, user.userDid());
                 };
 
                 var postStream = (switch (postSource) {
-                    case Config.PostSource.Feed feed -> this.getPosts(feed);
-                    case Config.PostSource.User user -> this.getPosts(user);
+                    case Config.PostSource.BskyFeed feed -> this.getPosts(feed);
+                    case Config.PostSource.BskyUser user -> this.getPosts(user);
                 })
                         .filter(p -> p.createdAt().isAfter(latestPostTimestamp))
                         .filter(p -> filter.test(filterContextFactory.apply(p)))
@@ -143,7 +143,7 @@ public class BskyPostGetter {
         }, this.executor);
     }
 
-    private PostStreamBuilder getPosts(Config.PostSource.Feed feed) {
+    private PostStreamBuilder getPosts(Config.PostSource.BskyFeed feed) {
         return this.postStreamBuilder(cursor -> {
             String atUri = "at://%s/app.bsky.feed.generator/%s".formatted(feed.userDid(), feed.feedKey());
             StringBuilder query = new StringBuilder("?feed=");
@@ -160,7 +160,7 @@ public class BskyPostGetter {
         }, feed.userDid() + "/" + feed.feedKey());
     }
 
-    private PostStreamBuilder getPosts(Config.PostSource.User user) {
+    private PostStreamBuilder getPosts(Config.PostSource.BskyUser user) {
         return this.postStreamBuilder(cursor -> {
             StringBuilder query = new StringBuilder("?actor=");
             query.append(URLEncoder.encode(user.userDid(), StandardCharsets.UTF_8));
@@ -226,8 +226,39 @@ public class BskyPostGetter {
             public CompletableFuture<Optional<JsonElement>> getFeed(String cursor) {
                 var request = requestFunc.apply(cursor);
                 var bodyHandler = jsonBodyHandler(request.uri());
-                return BskyPostGetter.this.httpClient.sendAsync(request, bodyHandler)
+                return PostGetter.this.httpClient.sendAsync(request, bodyHandler)
                         .thenApply(HttpResponse::body);
+            }
+
+            @Override
+            public String getCursor(JsonObject resObj, String oldCursor) {
+                if (resObj.has("cursor")) {
+                    JsonElement cursorElement = resObj.get("cursor");
+                    if (cursorElement.isJsonPrimitive()) {
+                        return cursorElement.getAsString();
+                    }
+                }
+
+                return oldCursor;
+            }
+
+            @Override
+            protected Optional<PostFeedResponse> getPosts(JsonObject response) {
+                var feed = response.get("feed");
+                if (!feed.isJsonArray()) {
+                    LOGGER.warn("Got no feed array in response from {}, skipping: {}", this.sourceName(), response);
+                    return Optional.empty();
+                }
+
+                JsonArray feedArray = feed.getAsJsonArray();
+
+                return Optional.of(feedArray.asList().stream()
+                                .filter(JsonObject.class::isInstance)
+                                .map(JsonObject.class::cast)
+                                .filter(j -> j.has("post") && j.get("post").isJsonObject())
+                                .filter(j -> j.getAsJsonObject("post").getAsJsonObject("record").get("$type").getAsString().equals("app.bsky.feed.post"))
+                                .map(PostGetter.this::parsePost))
+                        .map(s -> new PostFeedResponse(feedArray.size(), s));
             }
         };
     }
@@ -249,6 +280,13 @@ public class BskyPostGetter {
         public abstract String sourceName();
 
         public abstract CompletableFuture<Optional<JsonElement>> getFeed(String cursor);
+
+        protected abstract String getCursor(JsonObject resObj, String oldCursor);
+
+        protected record PostFeedResponse(int count, Stream<Post> posts) {
+        }
+
+        protected abstract Optional<PostFeedResponse> getPosts(JsonObject response);
 
         public PostStreamBuilder limit(int limit) {
             if (this.built) {
@@ -281,28 +319,19 @@ public class BskyPostGetter {
                         .filter(JsonElement::isJsonObject)
                         .map(JsonElement::getAsJsonObject);
                 if (responseOpt.isPresent()) {
-                    String oldCursor = this.cursor;
                     var resObj = responseOpt.get();
-                    if (resObj.has("cursor")) {
-                        JsonElement cursorElement = resObj.get("cursor");
-                        if (cursorElement.isJsonPrimitive()) {
-                            this.cursor = cursorElement.getAsString();
-                        }
-                    }
 
-                    var feed = resObj.get("feed");
-                    if (!feed.isJsonArray()) {
-                        LOGGER.warn("Got no feed array in response from {}, skipping: {}", this.sourceName(), resObj);
+                    String oldCursor = this.cursor;
+                    this.cursor = this.getCursor(resObj, this.cursor);
+
+                    int bufferSize = this.buffer.size();
+                    var feed = this.getPosts(resObj);
+                    if (feed.isEmpty()) {
                         return CompletableFuture.completedFuture(null);
                     }
 
-                    int bufferSize = this.buffer.size();
-                    feed.getAsJsonArray().asList().stream()
-                            .filter(JsonObject.class::isInstance)
-                            .map(JsonObject.class::cast)
-                            .filter(j -> j.has("post") && j.get("post").isJsonObject())
-                            .filter(j -> j.getAsJsonObject("post").getAsJsonObject("record").get("$type").getAsString().equals("app.bsky.feed.post"))
-                            .map(BskyPostGetter.this::parsePost)
+                    feed.get()
+                            .posts()
                             .filter(Objects::nonNull)
                             .sorted(Comparator.comparing(Post::createdAt))
                             .peek(p -> {
@@ -321,7 +350,7 @@ public class BskyPostGetter {
                                 }
                                 this.buffer.add(p);
                             });
-                    LOGGER.info("Got {} posts from {} (just chose {}/{})", this.buffer.size(), this.sourceName(), this.buffer.size() - bufferSize, feed.getAsJsonArray().size());
+                    LOGGER.info("Got {} posts from {} (just chose {}/{})", this.buffer.size(), this.sourceName(), this.buffer.size() - bufferSize, feed.get().count());
                     if (this.oldest.isAfter(this.mustBeNewerThan) && !(this.buffer.size() >= this.limit)) {
                         if (this.cursor != null) {
                             if (Objects.equals(oldCursor, this.cursor)) {
@@ -336,11 +365,10 @@ public class BskyPostGetter {
                     }
 
                     LOGGER.info("Got as much as we wanted from {}", this.sourceName());
-                    return CompletableFuture.completedFuture(null);
                 } else {
                     LOGGER.warn("Got no JSON Object in response from {}, skipping", this.sourceName());
-                    return CompletableFuture.completedFuture(null);
                 }
+                return CompletableFuture.completedFuture(null);
             };
 
             this.fut = this.runTask();
@@ -348,8 +376,8 @@ public class BskyPostGetter {
         }
 
         private CompletableFuture<Void> runTask() {
-            return CompletableFuture.supplyAsync(this.task, BskyPostGetter.this.executor)
-                    .thenComposeAsync($ -> $, BskyPostGetter.this.executor);
+            return CompletableFuture.supplyAsync(this.task, PostGetter.this.executor)
+                    .thenComposeAsync($ -> $, PostGetter.this.executor);
         }
 
         @Override

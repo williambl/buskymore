@@ -49,10 +49,10 @@ public class Main {
     private static Gson makeGson() {
         return new GsonBuilder()
                 .setStrictness(Strictness.LENIENT)
-                .registerTypeAdapter(BskyPostGetter.Config.PostSource.class, new JsonDeserializer<BskyPostGetter.Config.PostSource>() {
-                    private static final Type[] types = new Type[] {BskyPostGetter.Config.PostSource.User.class, BskyPostGetter.Config.PostSource.Feed.class};
+                .registerTypeAdapter(PostGetter.Config.PostSource.class, new JsonDeserializer<PostGetter.Config.PostSource>() {
+                    private static final Type[] types = new Type[] {PostGetter.Config.PostSource.BskyUser.class, PostGetter.Config.PostSource.BskyFeed.class};
                     @Override
-                    public BskyPostGetter.Config.PostSource deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context) throws JsonParseException {
+                    public PostGetter.Config.PostSource deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context) throws JsonParseException {
                         JsonParseException exception = new JsonParseException("Could not deserialise post source :(");
                         for (var clazz : types) {
                             try {
