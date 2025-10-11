@@ -31,7 +31,7 @@ public class PostGetter {
     public static final Logger LOGGER = LoggerFactory.getLogger(PostGetter.class);
     private static final Set<String> NOT_EMBEDS = Set.of("app.bsky.embed.external", "app.bsky.embed.record");
 
-    public record Config(String userAgent, int backlogDays, int maxBacklogPosts, String statePath, List<PostSource> postSources) {
+    public record Config(String userAgent, String tumblrApiKey, int backlogDays, int maxBacklogPosts, String statePath, List<PostSource> postSources) {
 
         sealed public interface PostSource {
             record BskyUser(String userDid, PostFilter.Fisp filter) implements PostSource {
@@ -44,6 +44,13 @@ public class PostGetter {
                 @Override
                 public String uniqueKey() {
                     return "%s/app.bsky.feed.generator/%s".formatted(this.userDid, this.feedKey);
+                }
+            }
+
+            record TumblrBlog(String blogId, PostFilter.Fisp filter) implements PostSource {
+                @Override
+                public String uniqueKey() {
+                    return "tumblr/%s".formatted(this.blogId);
                 }
             }
 
@@ -111,16 +118,19 @@ public class PostGetter {
                 var filter = PostFilter.FUNCTIONS.build(switch (postSource) {
                     case Config.PostSource.BskyFeed feed -> feed.filter();
                     case Config.PostSource.BskyUser user -> user.filter();
+                    case Config.PostSource.TumblrBlog blog -> blog.filter();
                 });
 
                 Function<Post, PostFilter.FilterContext> filterContextFactory = switch (postSource) {
                     case Config.PostSource.BskyFeed feed -> PostFilter.FilterContext::of;
                     case Config.PostSource.BskyUser user -> p -> PostFilter.FilterContext.of(p, user.userDid());
+                    case Config.PostSource.TumblrBlog blog -> p -> PostFilter.FilterContext.of(p, blog.blogId());
                 };
 
                 var postStream = (switch (postSource) {
                     case Config.PostSource.BskyFeed feed -> this.getPosts(feed);
                     case Config.PostSource.BskyUser user -> this.getPosts(user);
+                    case Config.PostSource.TumblrBlog blog -> this.getPosts(blog);
                 })
                         .filter(p -> p.createdAt().isAfter(latestPostTimestamp))
                         .filter(p -> filter.test(filterContextFactory.apply(p)))
@@ -144,7 +154,7 @@ public class PostGetter {
     }
 
     private PostStreamBuilder getPosts(Config.PostSource.BskyFeed feed) {
-        return this.postStreamBuilder(cursor -> {
+        return this.bskyPostStreamBuilder(cursor -> {
             String atUri = "at://%s/app.bsky.feed.generator/%s".formatted(feed.userDid(), feed.feedKey());
             StringBuilder query = new StringBuilder("?feed=");
             query.append(URLEncoder.encode(atUri, StandardCharsets.UTF_8));
@@ -161,7 +171,7 @@ public class PostGetter {
     }
 
     private PostStreamBuilder getPosts(Config.PostSource.BskyUser user) {
-        return this.postStreamBuilder(cursor -> {
+        return this.bskyPostStreamBuilder(cursor -> {
             StringBuilder query = new StringBuilder("?actor=");
             query.append(URLEncoder.encode(user.userDid(), StandardCharsets.UTF_8));
             if (cursor != null) {
@@ -174,6 +184,103 @@ public class PostGetter {
                     .GET()
                     .build();
         }, user.userDid());
+    }
+
+    private PostStreamBuilder getPosts(Config.PostSource.TumblrBlog blog) {
+        return new PostStreamBuilder() {
+            @Override
+            public String sourceName() {
+                return blog.blogId();
+            }
+
+            @Override
+            public CompletableFuture<Optional<JsonElement>> getFeed(String cursor) {
+                StringBuilder query = new StringBuilder("?api_key=");
+                query.append(URLEncoder.encode(PostGetter.this.config.tumblrApiKey, StandardCharsets.UTF_8));
+                query.append("&npf=true");
+                query.append("&limit=20");
+                if (cursor != null) {
+                    query.append("&offset=");
+                    query.append(URLEncoder.encode(cursor, StandardCharsets.UTF_8));
+                }
+                URI uri = URI.create("https://api.tumblr.com/v2/blog/%s/posts/text%s".formatted(blog.blogId(), query));
+                var request = HttpRequest.newBuilder(uri)
+                        .headers(PostGetter.this.makeHeaders())
+                        .GET()
+                        .build();
+                var bodyHandler = jsonBodyHandler(request.uri());
+                return PostGetter.this.httpClient.sendAsync(request, bodyHandler)
+                        .thenApply(HttpResponse::body);
+            }
+
+            @Override
+            protected String getCursor(JsonObject resObj, String oldCursor) {
+                int cursorInt;
+                try {
+                    cursorInt = oldCursor == null ? 0 : Integer.parseInt(oldCursor);
+                } catch (NumberFormatException e) {
+                    cursorInt = 0;
+                }
+                return Integer.toString(cursorInt + 20);
+            }
+
+            @Override
+            protected Optional<PostFeedResponse> getPosts(JsonObject response) {
+                var posts = Optional.of(response)
+                        .map(r -> r.get("response"))
+                        .filter(JsonElement::isJsonObject)
+                        .map(JsonElement::getAsJsonObject)
+                        .map(r -> r.get("posts"))
+                        .filter(JsonElement::isJsonArray)
+                        .map(JsonElement::getAsJsonArray)
+                        .map(JsonArray::asList);
+                if (posts.isEmpty()) {
+                    LOGGER.warn("Got no posts array in response from {}, skipping: {}", this.sourceName(), response);
+                    return Optional.empty();
+                }
+
+                return Optional.of(new PostFeedResponse(posts.get().size(),
+                        posts.stream()
+                                .flatMap(List::stream)
+                                .filter(JsonObject.class::isInstance)
+                                .map(JsonObject.class::cast)
+                                .map(this::parsePost)));
+            }
+
+            private Post parsePost(JsonObject j) {
+                try {
+                    var uri = new URI(j.get("post_url").getAsString());
+                    var authorUuid = j.getAsJsonObject("blog").get("uuid").getAsString();
+                    var blocks = j.getAsJsonArray("content").asList().stream()
+                            .filter(JsonElement::isJsonObject)
+                            .map(JsonElement::getAsJsonObject)
+                            .toList();
+                    var text = blocks.stream()
+                            .filter(jj -> jj.has("type") && jj.get("type").getAsString().equals("text"))
+                            .map(jj -> jj.get("text").getAsString())
+                            .collect(Collectors.joining());
+                    var createdAt = Instant.ofEpochSecond(j.get("timestamp").getAsLong());
+                    boolean hasEmbeds = blocks.stream()
+                            .anyMatch(jj -> !jj.get("type").getAsString().equals("text"));
+                    boolean hasVideos = blocks.stream()
+                            .anyMatch(jj -> jj.get("type").getAsString().equals("video"));
+                    return new Post(
+                            uri,
+                            authorUuid,
+                            text,
+                            createdAt,
+                            Optional.empty(),
+                            hasEmbeds,
+                            hasVideos,
+                            Set.of(),
+                            j
+                            );
+                } catch (URISyntaxException | JsonParseException | NullPointerException e) {
+                    LOGGER.error("Can't parse a post, ignoring it: {}", j, e);
+                    return null;
+                }
+            }
+        };
     }
 
     private static HttpResponse.BodyHandler<Optional<JsonElement>> jsonBodyHandler(URI uri) {
@@ -215,7 +322,7 @@ public class PostGetter {
         Instant latest();
     }
 
-    private PostStreamBuilder postStreamBuilder(Function<String, HttpRequest> requestFunc, String name) {
+    private PostStreamBuilder bskyPostStreamBuilder(Function<String, HttpRequest> requestFunc, String name) {
         return new PostStreamBuilder() {
             @Override
             public String sourceName() {
