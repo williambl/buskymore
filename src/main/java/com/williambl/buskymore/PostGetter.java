@@ -203,7 +203,7 @@ public class PostGetter {
                     query.append("&offset=");
                     query.append(URLEncoder.encode(cursor, StandardCharsets.UTF_8));
                 }
-                URI uri = URI.create("https://api.tumblr.com/v2/blog/%s/posts/text%s".formatted(blog.blogId(), query));
+                URI uri = URI.create("https://api.tumblr.com/v2/blog/%s/posts%s".formatted(blog.blogId(), query));
                 var request = HttpRequest.newBuilder(uri)
                         .headers(PostGetter.this.makeHeaders())
                         .GET()
