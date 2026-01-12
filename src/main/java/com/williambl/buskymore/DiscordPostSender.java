@@ -194,6 +194,6 @@ public class DiscordPostSender {
         }
         String did = uri.getAuthority();
         String postId = uri.getPath().split("/")[2];
-        return "https://bsky.app/profile/%s/post/%s".formatted(did, postId);
+        return "https://bskyx.app/profile/%s/post/%s".formatted(did, postId);
     }
 }
